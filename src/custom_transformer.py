@@ -51,19 +51,58 @@ class CustomTransformer(nn.Module):
         # Erstellt eine Tabelle mit [vocab_size x embed_dim] lernbaren Werten
         self.embedding = nn.Embedding(vocab_size, embed_dim)
 
+        # Definiert eine einzelne Encoder-Schicht (Layer) der Transformer-Architektur.
+        # Diese Schicht kombiniert Multi-Head Self-Attention mit einem Feed-Forward Neural Network (FFNN).
         encoder_layer = nn.TransformerEncoderLayer(
+            # d_model: Dimension der Embeddings / Feature-Vektoren (z. B. 128 oder 512).
+            # Bestimmt, wie groß die Vektor-Repräsentation für jedes einzelne Token ist.
             d_model=embed_dim,
+
+            # nhead: Anzahl der parallelen Attention-Köpfe (Attention Heads).
+            # Erlaubt dem Modell, gleichzeitig verschiedene Beziehungen zwischen Wörtern
+            # zu lernen (z.B. grammatikalische vs. semantische Verbindungen).
+            # Wichtig: d_model muss ohne Rest durch num_heads teilbar sein!
             nhead=num_heads,
+
+            # dropout: Wahrscheinlichkeit (z. B. 0.1 für 10%), mit der Neuronen während
+            # des Trainings zufällig deaktiviert werden, um Overfitting (Überanpassung) zu verhindern.
             dropout=dropout,
+
+            # activation: Aktivierungsfunktion im Feed-Forward-Netzwerk innerhalb des Layers.
+            # "gelu" (Gaussian Error Linear Unit) ist glatter als ReLU und der Standard bei
+            # modernen Sprachmodellen wie BERT, GPT und RoBERTa.
+            activation="gelu",
+
+            # batch_first: Gibt an, wie die Daten-Tensoren strukturiert sind.
+            # True  -> Tensor-Shape: [Batch_Size, Sequence_Length, Embedding_Dim]
+            # False -> Tensor-Shape: [Sequence_Length, Batch_Size, Embedding_Dim] (PyTorch-Oldschool-Standard)
             batch_first=True
         )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
         self.fc_out = nn.Linear(embed_dim, vocab_size)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        print("\n" + "=" * 50)
+        print("🔍 --- INSIDE TRANSFORMER FORWARD PASS ---")
+
+        # 1. Input Tokens (Integer IDs)
+        print(f"1. Input Tokens (Shape {x.shape}):\n   {x[0, :8].tolist()} ...")
+
+        # 2. Embedding Layer (Konvertierung in hochdimensionale Vektoren)
         out = self.embedding(x)
+        print(f"2. Embedding Vectors (Shape {out.shape}):")
+        print(f"   Ausschnitt des 1. Wort-Vektors (erste 5 Dimensionen):\n   {out[0, 0, :5].detach().tolist()}")
+
+        # 3. Transformer Encoder (Self-Attention & Contextualization)
         out = self.transformer(out)
+        print(f"3. Transformer Output Tensoren (Shape {out.shape})")
+
+        # 4. Linear Output Head (Logits über das gesamte Vokabular)
         logits = self.fc_out(out)
+        print(f"4. Unnormalized Logits (Shape {logits.shape}):")
+        print(f"   Logits für das nächste Token (erste 5 Vokabel-IDs):\n   {logits[0, -1, :5].detach().tolist()}")
+        print("=" * 50 + "\n")
+
         return logits
 
     def save_model(self, filepath: str):
@@ -73,3 +112,4 @@ class CustomTransformer(nn.Module):
     def load_model(self, filepath: str, device: torch.device):
         """Lädt die PyTorch Modellgewichte."""
         self.load_state_dict(torch.load(filepath, map_location=device))
+

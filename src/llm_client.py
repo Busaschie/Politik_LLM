@@ -4,44 +4,39 @@ Dünner Wrapper um die Groq API.
 from __future__ import annotations
 
 import os
-import random
 
-# 1. Erst versuchen, den Key aus den Umgebungsvariablen zu holen
+# 1. API-Key aus Umgebungsvariablen oder Streamlit Secrets laden
 _API_KEY = os.environ.get("GROQ_API_KEY")
 
-# 2. Falls nicht da, versuchen aus Streamlit Secrets (.streamlit/secrets.toml) zu laden
 if not _API_KEY:
     try:
         import streamlit as st
         _API_KEY = st.secrets.get("GROQ_API_KEY")
     except Exception:
-        pass
+        _API_KEY = None
 
+# 2. Groq-Client initialisieren
 _client = None
 
-# 3. Erst JETZT den Client initialisieren, nachdem _API_KEY final feststeht
 if _API_KEY:
     try:
         from groq import Groq
         _client = Groq(api_key=_API_KEY)
         print("[llm_client] Groq Client erfolgreich initialisiert!")
     except ImportError:
-        print("[llm_client] 'groq' Paket nicht installiert -- falle auf Mock-Modus zurück.")
+        print("[llm_client] 'groq' Paket ist nicht installiert.")
 else:
-    print("[llm_client] Kein API Key gefunden -- Mock-Modus aktiv.")
-
-
-MOCK_REPLIES = [
-    "Haha, klassisch. *rollt digital mit den Augen*",
-    "Ich hab zugehört -- und ich hab dazu was zu sagen: nice!",
-    "Moment, DAS musste ich kommentieren.",
-    "Pixel meldet sich: läuft bei euch, oder?",
-    "Ganz ehrlich? Bisschen chaotisch hier, aber ich mag's.",
-]
+    print("[llm_client] Kein GROQ_API_KEY gefunden.")
 
 
 def generate(system_prompt: str, user_prompt: str, max_tokens: int = 200) -> str:
-    if _client is not None:
+    """
+    Generiert eine Antwort via Groq LLM.
+    """
+    if _client is None:
+        return "⚠️ Fehler: Kein Groq API-Key konfiguriert oder Client nicht verfügbar."
+
+    try:
         response = _client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             max_tokens=max_tokens,
@@ -51,9 +46,11 @@ def generate(system_prompt: str, user_prompt: str, max_tokens: int = 200) -> str
             ],
         )
         return response.choices[0].message.content or ""
-
-    return random.choice(MOCK_REPLIES)
+    except Exception as e:
+        print(f"[llm_client] API-Fehler: {e}")
+        return f"⚠️ API-Fehler bei der Anfrage: {str(e)}"
 
 
 def is_mock_mode() -> bool:
+    """Gibt True zurück, wenn kein funktionierender API-Client vorhanden ist."""
     return _client is None
