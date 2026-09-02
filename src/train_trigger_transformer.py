@@ -13,7 +13,7 @@ from src.llm_client import generate
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DISCUSSIONS_DIR = BASE_DIR / "data" / "discussions"
-MODEL_SAVE_PATH = BASE_DIR / "data" / "custom_transformer_model.pt"
+MODEL_SAVE_PATH = BASE_DIR / "data" / "custom_transformer_model-2.pt"
 VOCAB_SAVE_PATH = BASE_DIR / "data" / "transformer_vocab.json"
 
 
@@ -81,7 +81,10 @@ def clean_debate_text(text: str) -> str:
         r"danke für die einladung!?",
         r"vielen dank für die frage!?",
         r"als vertreter der \w+ stehe ich!?",
-        r"sehr geehrte damen und herren,!?"
+        r"sehr geehrte damen und herren,!?",
+        r"Willkommen zur Debatte!?",
+        r"Eine Debatte!?",
+        r"zur Debatte!?",
     ]
 
     cleaned = text
@@ -141,7 +144,7 @@ def retrain_custom_transformer(m_prefs: dict, t_prefs: dict, status_container=No
     )
 
     # 🛑 EARLY STOPPING EINSTELLUNGEN
-    patience = t_prefs.get("patience", 5)  # Maximale Anzahl an Checks ohne Verbesserung
+    patience = t_prefs.get("patience", 2)  # Maximale Anzahl an Checks ohne Verbesserung
     best_val_loss = float("inf")
     patience_counter = 0
 
@@ -187,7 +190,7 @@ def retrain_custom_transformer(m_prefs: dict, t_prefs: dict, status_container=No
                 probs = F.softmax(last_token_logits, dim=-1)
 
                 top_prob, top_idx = torch.topk(probs, 3)
-                top_words = [vocab.idx2word.get(idx.item(), "<UNK>") for idx in top_idx]
+                top_words = [vocab.decode([idx.item()]) for idx in top_idx]
 
                 embed_grad_norm = model.embedding.weight.grad.norm().item() if model.embedding.weight.grad is not None else 0.0
                 linear_grad_norm = model.fc_out.weight.grad.norm().item() if model.fc_out.weight.grad is not None else 0.0
@@ -313,7 +316,7 @@ def sample_text(
         top_k: int = 40,
         top_p: float = 0.9
 ) -> str:
-    """Generiert Text mit Top-k und Top-p (Nucleus) Sampling."""
+    """Generiert Text mit Top-k und Top-p (Nucleus) Sampling basierend auf Subwords."""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     if not MODEL_SAVE_PATH.exists() or not VOCAB_SAVE_PATH.exists():
@@ -376,28 +379,28 @@ def sample_text(
             # 📊 TOP 5 KANDIDATEN UND WAHRSCHEINLICHKEITEN EXTRAHIEREN
             top5_probs, top5_indices = torch.topk(probs, k=min(5, len(vocab)))
 
-            # 5. Nächstes Wort ziehen
+            # 5. Nächstes Token (Subword ID) ziehen
             next_token = torch.multinomial(probs, num_samples=1).item()
-            picked_word = vocab.idx2word.get(next_token, "<UNK>")
+            picked_subword = vocab.decode([next_token])
 
             # 🖨️ SCHRITT-FÜR-SCHRITT AUSGABE IM TERMINAL
-            current_context = " ".join([vocab.idx2word.get(idx, "<UNK>") for idx in generated])
+            current_context = vocab.decode(generated)
             print(f"\n🔹 Schritt {step_idx + 1} | Context: \"{current_context}\"")
-            print("   Mögliche Top-5 Wörter (Softmax %):")
+            print("   Mögliche Top-5 Subwords (Softmax %):")
             for rank, (p, idx) in enumerate(zip(top5_probs, top5_indices), 1):
-                word = vocab.idx2word.get(idx.item(), "<UNK>")
+                subword = vocab.decode([idx.item()])
                 prob_pct = p.item() * 100
                 is_picked = "👈 [GEPICK T]" if idx.item() == next_token else ""
-                print(f"     {rank}. '{word}': {prob_pct:.2f}% {is_picked}")
+                print(f"     {rank}. '{subword}': {prob_pct:.2f}% {is_picked}")
 
-            # Fallback-Anzeige, falls das gezogene Wort außerhalb der Top 5 lag
+            # Fallback-Anzeige, falls das gezogene Token außerhalb der Top 5 lag
             if next_token not in [idx.item() for idx in top5_indices]:
-                print(f"   ➔ Gepickt: '{picked_word}' (ID: {next_token})")
+                print(f"   ➔ Gepickt: '{picked_subword}' (ID: {next_token})")
 
             generated.append(next_token)
 
-    words = [vocab.idx2word.get(idx, "<UNK>") for idx in generated]
-    final_text = " ".join(words)
+    # Zusammenfügen aller Tokens zu lesbarem Text
+    final_text = vocab.decode(generated)
 
     # 🖨️ TERMINAL FOOTER
     print("\n" + "✅ " * 15)

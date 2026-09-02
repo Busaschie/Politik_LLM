@@ -38,7 +38,7 @@ def generate(system_prompt: str, user_prompt: str, max_tokens: int = 200) -> str
 
     try:
         response = _client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="openai/gpt-oss-120b",
             max_tokens=max_tokens,
             messages=[
                 {"role": "system", "content": system_prompt},

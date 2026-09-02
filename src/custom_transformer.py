@@ -1,46 +1,66 @@
-# src/custom_transformer.py
 import json
 import torch
 import torch.nn as nn
 from pathlib import Path
+from tokenizers import Tokenizer
+from tokenizers.models import BPE
+from tokenizers.trainers import BpeTrainer
+from tokenizers.pre_tokenizers import Whitespace
 
 
 class Vocabulary:
-    def __init__(self, pad_token="<PAD>", unk_token="<UNK>"):
+    """Wrapper um den Hugging Face BPE-Subword-Tokenizer.
+
+    Ermöglicht Subword-Tokenisierung (Byte-Pair Encoding), um Out-of-Vocabulary (OOV)
+    Probleme zu vermeiden und deutsche Komposita besser abzubilden.
+    """
+
+    def __init__(self, tokenizer_path: str = None, pad_token="<PAD>", unk_token="<UNK>"):
         self.pad_token = pad_token
         self.unk_token = unk_token
-        self.word2idx = {pad_token: 0, unk_token: 1}
-        self.idx2word = {0: pad_token, 1: unk_token}
         self.pad_id = 0
         self.unk_id = 1
 
-    def build_vocab(self, texts: list[str]):
-        """Baut das Vokabular aus einer Liste von Texten auf."""
-        idx = len(self.word2idx)
-        for text in texts:
-            for word in text.split():
-                word = word.lower()
-                if word not in self.word2idx:
-                    self.word2idx[word] = idx
-                    self.idx2word[idx] = word
-                    idx += 1
+        if tokenizer_path and Path(tokenizer_path).exists():
+            self.tokenizer = Tokenizer.from_file(str(tokenizer_path))
+        else:
+            # Standard-Setup für ein neues BPE-Modell
+            self.tokenizer = Tokenizer(BPE(unk_token=self.unk_token))
+            self.tokenizer.pre_tokenizer = Whitespace()
+
+    def build_vocab(self, texts: list[str], vocab_size: int = 2000):
+        """Trainiert das BPE-Subword-Vokabular auf einer Liste von Texten."""
+        trainer = BpeTrainer(
+            special_tokens=[self.pad_token, self.unk_token],
+            vocab_size=vocab_size
+        )
+        self.tokenizer.train_from_iterator(texts, trainer)
 
     def encode(self, text: str) -> list[int]:
-        """Wandelt Text in Token-IDs um."""
-        return [self.word2idx.get(word.lower(), self.unk_id) for word in text.split()]
+        """Wandelt Text in Subword-Token-IDs um."""
+        if self.tokenizer is None:
+            raise ValueError("Tokenizer wurde nicht geladen oder trainiert!")
+        return self.tokenizer.encode(text).ids
+
+    def decode(self, ids: list[int]) -> str:
+        """Wandelt eine Liste von Token-IDs zurück in lesbaren Text um."""
+        if self.tokenizer is None:
+            raise ValueError("Tokenizer wurde nicht geladen oder trainiert!")
+        return self.tokenizer.decode(ids)
 
     def save(self, filepath: str):
-        with open(filepath, "w", encoding="utf-8") as f:
-            json.dump({"word2idx": self.word2idx}, f, ensure_ascii=False)
+        """Speichert das trainierte BPE-Tokenizer-Modell als JSON."""
+        self.tokenizer.save(str(filepath))
 
     def load(self, filepath: str):
-        with open(filepath, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            self.word2idx = data["word2idx"]
-            self.idx2word = {int(v): k for k, v in self.word2idx.items()}
+        """Lädt ein bestehendes BPE-Tokenizer-Modell aus einer Datei."""
+        self.tokenizer = Tokenizer.from_file(str(filepath))
 
     def __len__(self):
-        return len(self.word2idx)
+        """Gibt die Vokabelgröße (Anzahl der Subwords + Spezial-Tokens) zurück."""
+        if self.tokenizer is None:
+            return 2
+        return self.tokenizer.get_vocab_size()
 
 
 class CustomTransformer(nn.Module):
@@ -85,22 +105,22 @@ class CustomTransformer(nn.Module):
         print("\n" + "=" * 50)
         print("🔍 --- INSIDE TRANSFORMER FORWARD PASS ---")
 
-        # 1. Input Tokens (Integer IDs)
+        # 1. Input Tokens (Subword Integer IDs)
         print(f"1. Input Tokens (Shape {x.shape}):\n   {x[0, :8].tolist()} ...")
 
         # 2. Embedding Layer (Konvertierung in hochdimensionale Vektoren)
         out = self.embedding(x)
         print(f"2. Embedding Vectors (Shape {out.shape}):")
-        print(f"   Ausschnitt des 1. Wort-Vektors (erste 5 Dimensionen):\n   {out[0, 0, :5].detach().tolist()}")
+        print(f"   Ausschnitt des 1. Subword-Vektors (erste 5 Dimensionen):\n   {out[0, 0, :5].detach().tolist()}")
 
         # 3. Transformer Encoder (Self-Attention & Contextualization)
         out = self.transformer(out)
         print(f"3. Transformer Output Tensoren (Shape {out.shape})")
 
-        # 4. Linear Output Head (Logits über das gesamte Vokabular)
+        # 4. Linear Output Head (Logits über das gesamte Subword-Vokabular)
         logits = self.fc_out(out)
         print(f"4. Unnormalized Logits (Shape {logits.shape}):")
-        print(f"   Logits für das nächste Token (erste 5 Vokabel-IDs):\n   {logits[0, -1, :5].detach().tolist()}")
+        print(f"   Logits für das nächste Token (erste 5 Subword-IDs):\n   {logits[0, -1, :5].detach().tolist()}")
         print("=" * 50 + "\n")
 
         return logits
@@ -112,4 +132,3 @@ class CustomTransformer(nn.Module):
     def load_model(self, filepath: str, device: torch.device):
         """Lädt die PyTorch Modellgewichte."""
         self.load_state_dict(torch.load(filepath, map_location=device))
-
